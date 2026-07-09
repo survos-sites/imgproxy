@@ -82,12 +82,11 @@ ssh $H letsencrypt:enable imgproxy               # http-01, valid cert on origin
 1. Deploy this app first to **`imgproxy-staging.survos.com`** — a plain,
    throwaway name, not `imgproxy-pro.survos.com` (no reason to advertise the
    licensing tier in a public repo's docs) and not a reused/opaque name.
-   `images.survos.com` was considered and rejected: it's a *live but broken*
-   Cloudflare-proxied record today (`curl -I https://images.survos.com/` →
-   `520`, meaning Cloudflare has a real origin config for it that's currently
-   failing) — likely dead from an old free-tier imgproxy deploy per Tac's
-   recollection, but needs its own investigation/cleanup before reuse, not
-   during this migration.
+   `images.survos.com` was considered and rejected: it's the old free-tier
+   imgproxy (v3), no longer used, and now a *live but broken* Cloudflare-proxied
+   record (`curl -I https://images.survos.com/` → `520`). Confirmed dead —
+   a candidate for decommissioning (drop the DNS record) as a follow-up, but
+   out of scope for this migration.
 2. Run the full curl verification suite from the 2026-07-09 incident against
    the staging URL (direct signed URLs, the `curl --resolve` bypass trick, a
    few real production image URLs from zm/md) before touching the real domain.
