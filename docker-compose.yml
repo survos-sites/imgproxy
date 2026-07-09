@@ -1,0 +1,15 @@
+# LOCAL dev stack only. Prod (Dokku) does NOT use this file -- there it's the
+# docker.imgproxy.pro Pro image (see Dockerfile) with real S3 + license config
+# via `dokku config:set`. Locally we use the free darthsim/imgproxy image
+# instead: no license needed, and dev doesn't exercise the Pro-only ML/S3
+# result-cache features anyway -- just resize/signing against plain URLs.
+services:
+  imgproxy:
+    image: darthsim/imgproxy:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      IMGPROXY_USE_S3: "false"

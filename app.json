@@ -1,0 +1,6 @@
+{
+  "name": "imgproxy",
+  "description": "Self-hosted imgproxy Pro (ML build) -- signed on-the-fly image resizing/format conversion with an S3-backed result cache. Serves imgproxy.survos.com for zm, mediary, and md.",
+  "keywords": ["imgproxy", "images", "resize", "cdn"],
+  "website": "https://imgproxy.survos.com"
+}
