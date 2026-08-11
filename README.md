@@ -13,9 +13,9 @@ control, version pin in git, deploy via `git push dokku`.
 
 ## Versions (pinned)
 
-- **Server:** `docker.imgproxy.pro/imgproxy:v4.0.9-ml` (`Dockerfile`). The `FROM`
-  tag is the version pin — bump it, commit, redeploy. Believed to match the
-  live host but **not independently confirmed** — verify before first deploy:
+- **Server:** `docker.imgproxy.pro/imgproxy:v4.0.12-ml` (`Dockerfile`). The `FROM`
+  tag is the version pin — bump it, commit, redeploy. Verify the staging image
+  before production cutover:
   `docker inspect <container> --format '{{.Config.Image}}'`.
 - **Upgrade plan:** move to the first `4.1.x` beta once per-preset S3
   result-cache TTLs ship (on imgproxy's 4.1 roadmap). Today `IMGPROXY_CACHE_USE`

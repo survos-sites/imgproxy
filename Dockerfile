@@ -5,15 +5,13 @@
 # same image today; they need to be present wherever `dokku git:from-image` /
 # `git push dokku` actually builds.
 #
-# Believed to match the version currently running on the shared dokku host
-# (v4.0.9-ml) but NOT independently verified against the live container --
-# confirm with `docker inspect <container> --format '{{.Config.Image}}'` on
-# that host before first deploy, bump here if it's drifted.
+# The legacy service may run a different version until cutover. Confirm the
+# deployed staging image before switching production traffic.
 #
 # Upgrade plan: move to the first 4.1.x beta once per-preset S3 result-cache
 # TTLs ship (on imgproxy's 4.1 roadmap) — today caching is all-or-nothing via
 # IMGPROXY_CACHE_USE, no per-preset control.
-FROM docker.imgproxy.pro/imgproxy:v4.0.9-ml
+FROM docker.imgproxy.pro/imgproxy:v4.0.12-ml
 
 # imgproxy listens here by default (IMGPROXY_BIND=:8080); Dokku maps 80->8080
 # via `dokku ports:add imgproxy http:80:8080`.
