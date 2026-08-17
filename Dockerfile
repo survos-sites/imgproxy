@@ -70,14 +70,14 @@ FROM docker.imgproxy.pro/imgproxy:v4.0.12-ml
 # The server carries the UNION of every preset any app uses, so `pr:<name>` is
 # always resolvable no matter which app asks. The five `fit` presets come from
 # the bundle default; the three `fill` presets are openfoto/fotoStory home-page
-# chrome (cover-crop, edge-to-edge, matching the CSS object-fit:cover they sit
-# in) and are declared in its config/packages/survos_imgproxy.yaml.
+# chrome: `card` cover-crops in a repeated grid, `large` is the single shared
+# derivative for singular slots (hero, about) that CSS already frames with cover.
 #
 # Note that an app's `survos_imgproxy.presets` REPLACES the bundle default
 # wholesale rather than merging — which is why openfoto restates all five fit
 # presets verbatim. bin/check-presets-sync validates every app config too, so a
 # stale restatement there is caught rather than silently diverging.
-ENV IMGPROXY_PRESETS="tiny=rs:fit:200:200:0:0/q:70/f:webp,thumb=rs:fit:400:400:0:0/q:80/f:webp,observe=rs:fit:512:512:0:0/q:80/f:webp,display=rs:fit:600:400:0:0/q:80/f:webp,archive=rs:fit:0:0:0:0/q:88/sm:0/f:webp,card=rs:fill:800:600:0:0/q:82/f:webp,hero=rs:fill:2200:1100:0:0/q:82/f:webp,about=rs:fill:900:1100:0:0/q:82/f:webp"
+ENV IMGPROXY_PRESETS="tiny=rs:fit:200:200:0:0/q:70/f:webp,thumb=rs:fit:400:400:0:0/q:80/f:webp,observe=rs:fit:512:512:0:0/q:80/f:webp,display=rs:fit:600:400:0:0/q:80/f:webp,archive=rs:fit:0:0:0:0/q:88/sm:0/f:webp,card=rs:fill:800:600:0:0/q:82/f:webp,large=rs:fit:1600:1600:0:0/q:82/f:webp"
 
 # Serving, limits and behaviour
 ENV IMGPROXY_BIND=":8080" \
