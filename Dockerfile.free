@@ -1,0 +1,96 @@
+# imgproxy OSS — the UNCACHED, arbitrary-size sibling of ./Dockerfile.
+#
+# Deployed as a separate Dokku app from this same repo:
+#
+#   dokku apps:create imgproxy-free
+#   dokku builder-dockerfile:set imgproxy-free dockerfile-path Dockerfile.free
+#   git push dokku-free main
+#
+# One repo, two Dockerfiles — deliberately not a forked repo. The two images
+# share IMGPROXY_KEY/SALT, S3 source access, allowed formats and size limits;
+# duplicating the repo would mean editing every one of those twice, which is
+# exactly the drift bin/check-presets-sync exists to catch.
+#
+# ---------------------------------------------------------------------------
+# WHY A SECOND SERVER AT ALL
+#
+# IMGPROXY_CACHE_USE is all-or-nothing in 4.0 — either every result lands in
+# the S3 result cache or none does, with no per-preset control. That makes
+# one-off sizes (IIIF tile crops, face crops at computed coordinates) a cache
+# poisoning problem: unbounded distinct URLs, each earning a permanent S3
+# object.
+#
+# So requests are split by *whether the result deserves to be cached*:
+#
+#   ./Dockerfile      Pro, ML, /info, S3 result cache. Bounded preset set.
+#   ./Dockerfile.free OSS. Arbitrary sizes. No S3 cache — reverse proxy only.
+#
+# The enforcement here is structural rather than configured: the OSS build has
+# no result cache and no /info endpoint. Those are Pro features. This image
+# CANNOT write to the S3 result cache even if someone sets IMGPROXY_CACHE_USE
+# on it by mistake.
+#
+# SUNSET: imgproxy 4.1 is expected to bring per-preset result-cache control
+# (and source-URL caching). At that point this split collapses back to one
+# server — point both bundle hosts at the Pro app and delete this app. Do not
+# enshrine the two-server topology in anything harder to undo than config.
+# ---------------------------------------------------------------------------
+FROM ghcr.io/imgproxy/imgproxy:v4.0.12
+
+# Deliberately ABSENT vs ./Dockerfile, and why:
+#
+#   IMGPROXY_PRESETS         this server exists to serve one-offs; a preset
+#                            here would imply a cacheable derivative, which is
+#                            the Pro server's job
+#   IMGPROXY_CACHE_USE       OSS has no result cache (Pro feature)
+#   IMGPROXY_AUTOQUALITY_*   ONNX models ship only in the -ml Pro image
+#   IMGPROXY_CLASSIFICATION_*
+#   IMGPROXY_OBJECT_DETECTION_*  face detection happens at /info on Pro; this
+#                            server only crops to coordinates already computed
+#   IMGPROXY_LICENSE_KEY     no licence needed
+
+# Serving, limits and behaviour — kept identical to the Pro image so a request
+# behaves the same on either host apart from caching.
+ENV IMGPROXY_BIND=":8080" \
+    IMGPROXY_WORKERS=4 \
+    IMGPROXY_CONCURRENCY=2 \
+    IMGPROXY_MALLOC=malloc \
+    IMGPROXY_LOG_LEVEL=info \
+    IMGPROXY_TIMEOUT=120 \
+    IMGPROXY_DOWNLOAD_TIMEOUT=30 \
+    IMGPROXY_READ_REQUEST_TIMEOUT=30 \
+    IMGPROXY_KEEP_ALIVE_TIMEOUT=120 \
+    IMGPROXY_MAX_BUFFER_SIZE=67108864 \
+    IMGPROXY_MAX_WIDTH=4096 \
+    IMGPROXY_MAX_HEIGHT=4096 \
+    IMGPROXY_MAX_SRC_RESOLUTION=500 \
+    IMGPROXY_ALLOWED_FORMATS="jpeg,png,webp,avif" \
+    IMGPROXY_AUTO_WEBP=true \
+    IMGPROXY_AUTO_ROTATE=true \
+    IMGPROXY_STRIP_METADATA=false
+
+# Security. Signature verification is NOT optional here — this server accepts
+# arbitrary processing options, so an unsigned endpoint would be an open image
+# resizer for any source URL. IMGPROXY_KEY/SALT come from dokku config and
+# should match the Pro app so one builder can sign for either host.
+ENV IMGPROXY_REQUIRE_SIGNATURE=true \
+    IMGPROXY_BLOCK_LOOPBACK=true \
+    IMGPROXY_BLOCK_LOCAL_NETWORKS=true \
+    IMGPROXY_BLOCK_PRIVATE_NETWORKS=true
+
+# Reads sources from the same object storage as Pro. Endpoint/region/credentials
+# stay in dokku config — per-deployment, not part of the opinion.
+ENV IMGPROXY_USE_S3=true
+
+# ---------------------------------------------------------------------------
+# STAYS in `dokku config:set` for this app:
+#
+#   IMGPROXY_KEY, IMGPROXY_SALT              signing (share with the Pro app)
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY object storage credentials
+#   IMGPROXY_S3_ENDPOINT, IMGPROXY_S3_REGION
+#   *_ENDPOINT_USE_PATH_STYLE                false for Hetzner
+#
+# Do NOT set any IMGPROXY_CACHE_* key here. It would be inert (OSS has no
+# result cache) but implies this server caches, which is the whole distinction.
+# ---------------------------------------------------------------------------
+EXPOSE 8080
