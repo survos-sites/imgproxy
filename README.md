@@ -182,3 +182,67 @@ entirely — do not reintroduce an nginx-level cache on top of it.
 - **Persistence/state**: this app is stateless other than the S3-backed result
   cache (no local volumes needed, unlike `mattermost`'s Postgres/plugin
   volumes) — confirm that holds once the real env is filled in.
+
+## Presets — the two-repo contract
+
+Preset definitions live in **two** places and must stay identical:
+
+| Half | Location |
+|---|---|
+| Server | `IMGPROXY_PRESETS` in this repo's `Dockerfile` |
+| Client | `SurvosImgproxyBundle::DEFAULT_PRESETS` in `mono/bu/imgproxy-bundle` |
+
+The bundle expands presets **client-side** (emitting `rs:fit:400:400:0:0/q:80/f:webp`
+rather than `pr:thumb`) so it works against any imgproxy without server config.
+Every caller of a given preset emits a byte-identical string, so the cache stays
+hot — the risk isn't the expansion, it's the two lists drifting apart, or an app
+overriding `survos_imgproxy.presets` with a one-off size.
+
+imgproxy has no endpoint that reports its presets, so read them back instead:
+
+```bash
+bin/presets              # names only
+bin/presets --full       # name=definition
+bin/presets --json
+bin/presets --running    # from the deployed image, not the Dockerfile
+```
+
+And enforce the contract:
+
+```bash
+bin/check-presets-sync   # exit 1 + a diff on drift
+```
+
+### Current set
+
+| Preset | Definition | Notes |
+|---|---|---|
+| `tiny` | `rs:fit:200:200/q:70/f:webp` | |
+| `thumb` | `rs:fit:400:400/q:80/f:webp` | gallery grid — the burst case |
+| `observe` | `rs:fit:512:512/q:80/f:webp` | |
+| `display` | `rs:fit:600:400/q:80/f:webp` | |
+| `archive` | `rs:fit:0:0/q:88/sm:0/f:webp` | **no resize**, full source resolution, keeps EXIF |
+
+`archive` is `0:0` deliberately: OpenSeadragon zooms that derivative, so capping
+it would degrade the viewer below what the scan actually holds. `sm:0` preserves
+EXIF/IPTC/XMP.
+
+⚠️ **Changing a definition silently invalidates every cached derivative under
+that name.** Settle sizes before the thumbnail-seeding job populates the cache
+at scale.
+
+### Why the format is pinned, not negotiated
+
+The presets hardcode `f:webp` rather than relying on `IMGPROXY_AUTO_WEBP`.
+Cloudflare does not vary its cache on `Accept`, so negotiating format behind
+this CDN can hand a client a format it cannot decode — intermittently, for a
+subset of users. Explicit format keeps the cache key deterministic.
+
+Measured on our own images at matched SSIM (2026-08-17): webp is **20–33%
+smaller than jpeg**, and the advantage grows with quality — so it earns its
+place most on `archive`, least on `thumb`. Comparing at equal *quality numbers*
+(q80 vs q80) understates it badly; those scales are not comparable.
+
+AVIF is roughly another 25% smaller but sits at ~93–95% browser support vs
+webp's ~97%. Revisit `IMGPROXY_AUTO_AVIF` only after verifying `Vary` handling
+end to end at both Cloudflare and the S3 result cache.

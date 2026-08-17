@@ -26,10 +26,48 @@ FROM docker.imgproxy.pro/imgproxy:v4.0.12-ml
 # including ONNX model paths that only make sense *inside* this image.
 # ---------------------------------------------------------------------------
 
-# Presets. Previously ONLY in /mnt/volume-1/imgproxy-presets.conf, mounted to
-# /etc/imgproxy/presets.conf via IMGPROXY_PRESETS_PATH. That file was untracked:
-# losing it breaks every thumb/display/archive URL in zm, mediary and md.
-ENV IMGPROXY_PRESETS="thumb=rs:fit:512:512:0:0/q:80/f:webp/sm:0,display=rs:fit:1280:1280:0:0/q:82/f:webp/sm:0,archive=rs:fit:3000:3000:0:0/q:88/f:webp/sm:0"
+# ---------------------------------------------------------------------------
+# PRESETS — the canonical, versioned list. Apps MUST request `pr:<name>` and
+# never inline `rs:...` options.
+#
+# Why this matters: every distinct option string is its own cache key, in both
+# Cloudflare and the S3 result cache. When each app spells out its own
+# dimensions they drift apart and the cache fragments — measured 2026-08-17,
+# apps were requesting rs:fit:400:400, rs:fill:800:600 and rs:fit:600:400 while
+# the server presets (512/1280/3000) went completely unused. Four preset names
+# is four cache keys per source image; ad-hoc options are unbounded.
+#
+# These MUST stay identical to SurvosImgproxyBundle::DEFAULT_PRESETS in
+# mono/bu/imgproxy-bundle — that is the client half of the same contract. The
+# bundle expands presets client-side (deliberately: it keeps the bundle usable
+# against any imgproxy without server config), so these definitions and the
+# option ORDER below (rs / q / sm / f) mirror exactly what the builder emits.
+# Verify with:  bin/presets --full
+#
+# `archive` is 0:0 on purpose — no resize, full source resolution, sm:0 to keep
+# EXIF/IPTC/XMP. OpenSeadragon zooms this derivative, so capping it to a fixed
+# size would silently degrade the viewer below what the scan actually contains.
+#
+# ⚠️ Changing a preset's definition silently invalidates every cached
+# derivative under that name. Settle these before the thumbnail-seeding job
+# populates the cache at scale.
+#
+# Format is pinned to webp deliberately, NOT left to IMGPROXY_AUTO_WEBP.
+# Cloudflare does not vary its cache on `Accept`, so content negotiation
+# behind this CDN can serve a client a format it cannot decode. Explicit
+# format = deterministic cache key. Revisit AUTO_AVIF only after verifying
+# Vary handling end to end (~25% smaller than webp at matched quality, but
+# ~93-95% browser support vs webp's ~97%).
+#
+# Measured on our own images at matched SSIM (2026-08-17): webp is 20-33%
+# smaller than jpeg, and the advantage grows with quality — so it earns its
+# place most on `archive`, least on `thumb`.
+# ---------------------------------------------------------------------------
+# THIS LINE IS THE SINGLE SOURCE OF TRUTH. Do not mirror it into a second file
+# — a duplicated list is the drift this whole block exists to prevent. imgproxy
+# has no endpoint that reports its presets, so consumers read it back off the
+# image instead (see bin/presets).
+ENV IMGPROXY_PRESETS="tiny=rs:fit:200:200:0:0/q:70/f:webp,thumb=rs:fit:400:400:0:0/q:80/f:webp,observe=rs:fit:512:512:0:0/q:80/f:webp,display=rs:fit:600:400:0:0/q:80/f:webp,archive=rs:fit:0:0:0:0/q:88/sm:0/f:webp"
 
 # Serving, limits and behaviour
 ENV IMGPROXY_BIND=":8080" \
@@ -91,17 +129,18 @@ ENV IMGPROXY_AUTOQUALITY_JPEG_NET=/opt/imgproxy/share/models/autoquality_jpeg.on
 #   IMGPROXY_CACHE_*_ENDPOINT/_REGION/_BUCKET/_PATH_PREFIX
 #   *_ENDPOINT_USE_PATH_STYLE                provider-specific (false for Hetzner)
 #
-# Deploying this change means unsetting what it now supersedes, or the old
-# values keep winning (Dokku config overrides image ENV):
+# APPLIED 2026-08-17. The 39 superseded keys were unset and the presets file
+# unmounted, so `dokku config` now holds only the 18 secrets/endpoints listed
+# above and `dokku storage:list imgproxy` is empty. Verified end-to-end: bad
+# signature still 403s, and pr:thumb/display/archive returned the expected
+# pixel dimensions from a forced cache miss.
 #
-#   dokku config:unset imgproxy IMGPROXY_PRESETS_PATH IMGPROXY_BIND \
-#     IMGPROXY_WORKERS IMGPROXY_CONCURRENCY ... (all keys set above)
-#   dokku storage:unmount imgproxy \
-#     /mnt/volume-1/imgproxy-presets.conf:/etc/imgproxy/presets.conf
+# Dokku config OVERRIDES image ENV, so if any of the keys set above are ever
+# re-added with `config:set` they will silently win over this file again.
 #
-# After that imgproxy has NO mounts and is fully stateless — which is what makes
-# relocating it (e.g. to fsn1, next to the object storage) a redeploy rather
-# than a migration.
+# imgproxy now has NO mounts and is fully stateless — which is what makes
+# relocating it (e.g. to fsn1, next to the object storage — survos/docker#6) a
+# redeploy rather than a migration.
 #
 # NOTE: IMGPROXY_CACHE_ENDPOINT/_REGION and IMGPROXY_CACHE_S3_ENDPOINT/_S3_REGION
 # are BOTH set on the host with identical values — two naming generations kept

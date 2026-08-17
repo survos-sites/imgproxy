@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Report the canonical imgproxy preset names/definitions.
+#
+# imgproxy has no HTTP endpoint that returns its presets, so this reads them
+# back from the one place they are defined. There is deliberately no second
+# copy of the list anywhere — duplicating it is the drift this guards against.
+#
+#   bin/presets              names only (for scripts / CI comparison)
+#   bin/presets --full       name=definition
+#   bin/presets --json       JSON object
+#   bin/presets --running    read from the deployed image instead of the Dockerfile
+#
+# CI use — assert an app's preset enum matches what is actually deployed:
+#   diff <(bin/presets) <(php bin/console app:imgproxy:presets)
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODE="${1:-names}"
+IMAGE="${IMGPROXY_IMAGE:-dokku/imgproxy:latest}"
+
+raw() {
+  if [ "$MODE" = "--running" ]; then
+    # authoritative: what the built image actually carries
+    docker run --rm --entrypoint sh "$IMAGE" -c 'printenv IMGPROXY_PRESETS' 2>/dev/null
+  else
+    grep -E '^ENV IMGPROXY_PRESETS=' "$HERE/Dockerfile" \
+      | sed -E 's/^ENV IMGPROXY_PRESETS="(.*)"$/\1/'
+  fi
+}
+
+PRESETS="$(raw)"
+[ -n "$PRESETS" ] || { echo "could not read IMGPROXY_PRESETS" >&2; exit 1; }
+
+case "$MODE" in
+  --full)
+    tr ',' '\n' <<<"$PRESETS"
+    ;;
+  --json)
+    tr ',' '\n' <<<"$PRESETS" | awk -F= '
+      BEGIN { printf "{\n" }
+      { if (NR>1) printf ",\n"; printf "  \"%s\": \"%s\"", $1, $2 }
+      END { printf "\n}\n" }'
+    ;;
+  *)
+    tr ',' '\n' <<<"$PRESETS" | cut -d= -f1
+    ;;
+esac
