@@ -40,3 +40,17 @@ services:
       # Fail loudly in dev rather than silently serving a placeholder.
       IMGPROXY_ENFORCE_WEBP: "false"
       IMGPROXY_DEVELOPMENT_ERRORS_MODE: "true"
+      # The 5s default is too tight for multi-MB masters pulled over the S3 API while an
+      # archive run is uploading on the same link. Measured 2026-08-20 on a fortepan sync:
+      # idle, /info on a 2 MB object answers in 0.2s; with the archive worker running, the
+      # same request hits "source request timed out: context deadline exceeded" at exactly
+      # 5.003s. Those 504s are what stalled asset.info — and a timeout looks identical to a
+      # missing object, so it also poisons the "a 404 means an application bug" guarantee
+      # that IMGPROXY_ALLOWED_SOURCES is supposed to buy.
+      IMGPROXY_DOWNLOAD_TIMEOUT: "30"
+      # ...and the OVERALL request budget, which is a separate 10s default and bites next. mediary's
+      # /info asks for exif+thumbhash+blurhash+phash+avg+dominant-colours in one call; on a 12 MB
+      # fortepan master that is ~10s of decode in the UNLICENSED dev image (2s of which is the S3
+      # fetch). Licensed Pro is much faster, so this ceiling is a dev-stack concern, not a
+      # production one — but here it is the difference between asset.info draining and stalling.
+      IMGPROXY_TIMEOUT: "60"
