@@ -1,0 +1,42 @@
+# LOCAL **Pro** stack — the isolated half of the closed-loop mediary test.
+#
+# Separate from docker-compose.yml on purpose: that file is the documented
+# free-image dev stack (darthsim/imgproxy, IMGPROXY_USE_S3=false) and should stay
+# that way. This one exists because a local mediary run needs the things only Pro
+# does — /info with thumb_hash, blurhash, dominant_colors, detect_objects — and
+# needs them against an isolated bucket rather than prod museado.
+#
+#   docker compose -f docker-compose.pro.yml up -d
+#   curl -s localhost:8081/health
+#
+# Notes:
+#  - Port 8081, because 8080 is already taken locally by depot_imgproxy.
+#  - IMGPROXY_LICENSE_KEY is deliberately EMPTY. Unlicensed, the Pro image still
+#    serves Pro features, rate-limited to ~100 req/min. A 10-record smoke test is
+#    nowhere near that, and it keeps the prod licence out of a dev .env.
+#  - IMGPROXY_KEY/SALT come from .env and MUST match mediary/.env.local, or every
+#    signed URL 403s.
+#  - Source bucket is mediary-dev (created 2026-08-20), NOT museado. The whole
+#    point is that this test cannot read or write production objects.
+#  - No result cache (IMGPROXY_CACHE_USE unset): caching a test run into S3 buys
+#    nothing and would leave junk behind.
+services:
+  imgproxy-pro:
+    image: docker.imgproxy.pro/imgproxy:v4.0.12-ml
+    container_name: imgproxy_pro_local
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    env_file:
+      - .env
+    environment:
+      # Source storage — the isolated bucket.
+      IMGPROXY_USE_S3: "true"
+      IMGPROXY_S3_ENDPOINT: "https://fsn1.your-objectstorage.com"
+      IMGPROXY_S3_REGION: "fsn1"
+      # Hetzner needs the region to match the endpoint location; without it,
+      # CreateBucket/GetObject fail with LocationConstraintConflict.
+      AWS_REGION: "fsn1"
+      # Fail loudly in dev rather than silently serving a placeholder.
+      IMGPROXY_ENFORCE_WEBP: "false"
+      IMGPROXY_DEVELOPMENT_ERRORS_MODE: "true"

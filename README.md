@@ -43,7 +43,7 @@ the current shared host (it's running this same image today) — confirm they
 carry over to wherever Dokku actually runs `docker build` for this app.
 
 ```bash
-H=dokku@ssh.survos.com
+H=dokku@fsn1.survos.com          # was ssh.survos.com (ash) until the 2026-08-18 move
 
 ssh $H apps:create imgproxy
 
@@ -51,29 +51,134 @@ ssh $H apps:create imgproxy
 # see .env.example for the full list of what's expected. Do not guess these,
 # especially IMGPROXY_KEY/IMGPROXY_SALT (must match what zm/mediary/md send)
 # and the S3/license values.
+#
+# READ "S3 credentials: two pairs, not one" BELOW BEFORE RUNNING THIS.
+# AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are the easiest thing in this list to
+# forget, and forgetting them fails silently -- imgproxy boots clean and every
+# s3:// source 404s.
 ssh $H config:set --no-restart imgproxy \
   IMGPROXY_KEY=<from current container> \
   IMGPROXY_SALT=<from current container> \
   IMGPROXY_LICENSE_KEY=<from current container> \
-  IMGPROXY_USE_S3=true \
+  AWS_ACCESS_KEY_ID=<source bucket credentials> \
+  AWS_SECRET_ACCESS_KEY=<source bucket credentials> \
   IMGPROXY_S3_ENDPOINT=<...> \
   IMGPROXY_S3_REGION=<...> \
-  IMGPROXY_S3_ALLOWED_BUCKETS=<...> \
-  IMGPROXY_CACHE_USE=s3 \
-  IMGPROXY_CACHE_S3_ENDPOINT=<...> \
-  IMGPROXY_CACHE_S3_REGION=<...> \
+  IMGPROXY_CACHE_ACCESS_KEY_ID=<result-cache credentials> \
+  IMGPROXY_CACHE_SECRET_ACCESS_KEY=<result-cache credentials> \
   IMGPROXY_CACHE_BUCKET=<...> \
+  IMGPROXY_CACHE_REGION=<...> \
+  IMGPROXY_CACHE_PATH_PREFIX=<...> \
   IMGPROXY_WORKERS=<size for real load -- see note below>
+
+# IMGPROXY_USE_S3=true and IMGPROXY_CACHE_USE=s3 are BAKED INTO THE IMAGE
+# (Dockerfile) -- do not set them here, and do not assume that because they are
+# on, S3 actually works. They only declare intent; the credentials above are
+# what make it function.
 
 ssh $H domains:set imgproxy imgproxy.survos.com
 ssh $H ports:add  imgproxy http:80:8080
 
-git remote add dokku dokku@ssh.survos.com:imgproxy
+git remote add dokku dokku@fsn1.survos.com:imgproxy
 git push dokku main                              # builds the Dockerfile, deploys
 
 ssh $H letsencrypt:set    imgproxy email tac@museado.org
 ssh $H letsencrypt:enable imgproxy               # http-01, valid cert on origin
 ```
+
+## S3 credentials: two pairs, not one
+
+**This is the thing that will bite you when imgproxy moves to a new host.** It
+cost a debugging session on 2026-08-20, and the deploy recipe above used to omit
+it entirely.
+
+imgproxy reads S3 in two independent roles, each with its own credential pair:
+
+| role | what it touches | env vars |
+|---|---|---|
+| **source** | the masters imgproxy resizes — `s3://museado/orig/…` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (standard AWS SDK chain) |
+| **result cache** | rendered derivatives — `museado` bucket, `cache/` prefix | `IMGPROXY_CACHE_ACCESS_KEY_ID`, `IMGPROXY_CACHE_SECRET_ACCESS_KEY` |
+
+The source pair uses the plain AWS SDK names — they carry no `IMGPROXY_` prefix,
+so they do not look like imgproxy config, and every `grep IMGPROXY` audit of the
+deployment misses them.
+
+### Why it fails silently
+
+`IMGPROXY_USE_S3=true` lives in the **Dockerfile**, not in Dokku config. A fresh
+deploy therefore always claims S3 is enabled. Boot logs are clean and even say:
+
+```
+level="INFO" msg="Source URL scheme registered, you can now use s3:// source URLs" scheme="s3"
+```
+
+That line means the *scheme handler* registered. It says nothing about whether
+credentials exist. With no `AWS_ACCESS_KEY_ID`, imgproxy falls back to the
+default AWS endpoint, finds no bucket, and returns `404 Source is unreachable`
+for **every** `s3://` URL — while `https://` sources keep working perfectly.
+
+In mediary that meant 93% of assets (every one with a `storage_key`, since
+`AssetRegistry::imgProxyUrl` prefers `s3://`) had broken thumbnails, with no
+error anywhere except the HTTP status.
+
+### Reading the status code
+
+| status | meaning | look at |
+|---|---|---|
+| **403** | bad signature | `IMGPROXY_KEY` / `IMGPROXY_SALT` mismatch with the client app |
+| **404** `Source is unreachable` | signature is VALID, source fetch failed | source credentials, `IMGPROXY_S3_ENDPOINT`, `IMGPROXY_S3_REGION`, bucket/key exists |
+
+404 rather than 403 is the useful signal: it means signing is fine and the
+problem is strictly source access. Do not go re-deriving signatures.
+
+### Verifying — use a URL that has never been requested
+
+Rendered responses are cached (`IMGPROXY_CACHE_USE=s3`, plus nginx in front), and
+**error responses cache too** — the same failure mode as the 2026-07-09 502
+incident. After fixing credentials, the URL you were testing with will keep
+returning the cached 404 and you will think the fix failed.
+
+Always verify against a fresh source key:
+
+```bash
+# 1. a source you have never requested through imgproxy before
+KEY=orig/f3/72/f37276b5605c75411d92af024faf3cce75ebd7c450d93a9b3f25167f45358dca.jpg
+
+# 2. sign it via any client app's helper endpoint (survos/imgproxy-bundle)
+SIGNED=$(curl -s "https://<app>/imgproxy/url?url=s3%3A%2F%2Fmuseado%2F$KEY&preset=thumb" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["url"])')
+
+# 3. expect: 200 image/webp
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$SIGNED"
+```
+
+Cross-check that the object itself exists by fetching it over plain HTTPS
+(`https://<endpoint>/<bucket>/<key>`). If HTTPS gives 200 and `s3://` gives 404,
+it is credentials — not a missing object.
+
+### Moving imgproxy to its own server
+
+Checklist, in addition to the DNS/Cloudflare cutover steps below:
+
+1. Copy **both** credential pairs. `grep IMGPROXY` will not show you the source pair.
+2. Set `IMGPROXY_S3_ENDPOINT` **and** `IMGPROXY_S3_REGION`. The endpoint alone is
+   not enough, and the region is easy to miss because the cache has its own.
+3. Do not carry `IMGPROXY_USE_S3` / `IMGPROXY_CACHE_USE` forward as config — they
+   are in the image. Setting them in Dokku config is harmless but misleading.
+4. Confirm the source credential is scoped to the whole bucket, not just a
+   prefix. On the current deployment source and cache share the `museado` bucket
+   (`orig/` vs `cache/`), so one credential can legitimately serve both roles —
+   that is a property of this deployment, not a guarantee. A prefix-scoped key
+   yields 403 on sources while the cache keeps working.
+5. Verify with a never-requested key, per above, before repointing DNS.
+
+### Naming drift to resolve
+
+The live deployment uses `IMGPROXY_CACHE_REGION`, while `.env.example` and older
+docs say `IMGPROXY_CACHE_S3_REGION` / `IMGPROXY_CACHE_S3_ENDPOINT`. Both naming
+generations were set on the old host with identical values (see the note at the
+bottom of the `Dockerfile`). Resolve against the v4.0.12 docs and set **one**
+generation on any new host rather than copying both forward.
 
 ### Cutover — do NOT just flip DNS
 
