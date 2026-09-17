@@ -98,6 +98,19 @@ ENV IMGPROXY_BIND=":8080" \
     IMGPROXY_AUTO_ROTATE=true \
     IMGPROXY_STRIP_METADATA=false
 
+# AI-training opt-out, sent on every image response. Much of what we serve is
+# CC0 or public domain, so this is a REQUEST, not a rights reservation — but the
+# crawlers that matter (Common Crawl, img2dataset, the big AI labs) honour it
+# voluntarily. It does not affect our own tagging/description fetches.
+#   X-Robots-Tag noai/noimageai  — img2dataset skips these by default
+#   tdm-reservation: 1           — W3C TDMRep text-and-data-mining opt-out
+# CUSTOM_RESPONSE_HEADERS is Pro-only; the OSS image (Dockerfile.free) can't set
+# it. The separator is `|` because the default `\;` is fragile inside a
+# Dockerfile ENV string.
+# Cloudflare-cached derivatives keep their old headers until they're refetched.
+ENV IMGPROXY_CUSTOM_HEADERS_SEPARATOR="|" \
+    IMGPROXY_CUSTOM_RESPONSE_HEADERS="X-Robots-Tag=noai, noimageai|tdm-reservation=1"
+
 # Security. REQUIRE_SIGNATURE is the reason IMGPROXY_KEY/SALT must match what
 # zm/mediary/md sign with — see the imgproxy-signed-url-pattern note.
 ENV IMGPROXY_REQUIRE_SIGNATURE=true \

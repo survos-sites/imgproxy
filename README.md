@@ -133,7 +133,7 @@ problem is strictly source access. Do not go re-deriving signatures.
 
 ### Verifying — use a URL that has never been requested
 
-Rendered responses are cached (`IMGPROXY_CACHE_USE=s3`, plus nginx in front), and
+Rendered responses are cached (`IMGPROXY_CACHE_USE=s3`, plus Cloudflare in front), and
 **error responses cache too** — the same failure mode as the 2026-07-09 502
 incident. After fixing credentials, the URL you were testing with will keep
 returning the cached 404 and you will think the fix failed.
@@ -245,30 +245,25 @@ that pattern carries over here**, it doesn't.
   client. This exact gap contributed to how confusing the 2026-07-09 incident
   was to diagnose, even though it turned out not to be the actual root cause.
 
-## nginx tuning (`nginx.conf.d/imgproxy.conf`)
+## nginx: Dokku's proxy only, nothing of ours
 
-Dokku supports per-app additive nginx config via `nginx.conf.d/*.conf` files
-checked into the repo root, included into the generated vhost — this is
-**not** a full vhost replacement; Dokku still owns TLS termination and the
-`proxy_pass`/upstream wiring. `nginx.conf.d/imgproxy.conf` ports the tuning
-from the hand-maintained vhost this replaces: response buffering sized for
-image payloads, timeouts, security headers, and exposing imgproxy's own
-`X-Result-Cache` header as `X-Cache-Status`.
+imgproxy is its own HTTP server. Dokku's host nginx sits in front of it for TLS
+and routing (`proxy_pass http://imgproxy-8080`) and passes imgproxy's response
+headers through unchanged, so response headers belong in the Dockerfile
+(`IMGPROXY_CUSTOM_RESPONSE_HEADERS`), not in nginx.
 
-**Validate after first deploy** — run `dokku nginx:show-config imgproxy` and
-confirm the directives landed in the context you'd expect (Dokku versions
-differ on whether app-supplied config lands at server- or location-level; the
-`if ($request_method ...)` block specifically needs a `location` context to be
-legal nginx — check that one first).
+There used to be an `nginx.conf.d/imgproxy.conf` here. It was never live: a
+Dockerfile build does not copy that directory into the image, so Dokku never
+picked it up (checked 2026-09-17; `/home/dokku/imgproxy/nginx.conf.d/` held only
+Dokku's own `hsts.conf`). Deleted rather than activated, because turning it on
+would have changed Cache-Control and buffering on a working deployment.
 
-**Deliberately absent: any `proxy_cache*` directive.** That's not an
-oversight — it's the fix for a real outage. On 2026-07-09,
+**Do not add an nginx-level cache (`proxy_cache*`).** On 2026-07-09,
 `proxy_cache_valid any 0s;` combined with `proxy_cache_use_stale error timeout
-...` on the old vhost caused nginx to cache a single transient 502 and serve
-it to *every* client indefinitely, regardless of IP, browser, or user-agent.
-Full writeup: `showcase` memory `imgproxy-502-nginx-cache-incident.md`. imgproxy
-Pro's own S3-backed result cache (`IMGPROXY_CACHE_USE`) replaces this layer
-entirely — do not reintroduce an nginx-level cache on top of it.
+...` on the old vhost cached a single transient 502 and served it to *every*
+client indefinitely. Full writeup: `showcase` memory
+`imgproxy-502-nginx-cache-incident.md`. imgproxy Pro's S3 result cache
+(`IMGPROXY_CACHE_USE`) is the only cache layer.
 
 ## Known follow-ups (carried over from the old host, not yet done here)
 
