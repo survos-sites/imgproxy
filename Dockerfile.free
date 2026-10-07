@@ -69,6 +69,12 @@ ENV IMGPROXY_BIND=":8080" \
     IMGPROXY_AUTO_ROTATE=true \
     IMGPROXY_STRIP_METADATA=false
 
+# CORS. Browser clients that fetch image bytes from script (the Unity Web build of
+# survos/museum-browser via UnityWebRequest, canvas-based tools) need this; plain
+# <img> tags never did. Signed URLs are the access control, so any origin is fine.
+# Cloudflare-cached derivatives keep their old headers until they're refetched.
+ENV IMGPROXY_ALLOW_ORIGIN="*"
+
 # Security. Signature verification is NOT optional here — this server accepts
 # arbitrary processing options, so an unsigned endpoint would be an open image
 # resizer for any source URL. IMGPROXY_KEY/SALT come from dokku config and

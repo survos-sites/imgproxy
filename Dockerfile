@@ -111,6 +111,12 @@ ENV IMGPROXY_BIND=":8080" \
 ENV IMGPROXY_CUSTOM_HEADERS_SEPARATOR="|" \
     IMGPROXY_CUSTOM_RESPONSE_HEADERS="X-Robots-Tag=noai, noimageai|tdm-reservation=1"
 
+# CORS. Browser clients that fetch image bytes from script (the Unity Web build of
+# survos/museum-browser via UnityWebRequest, canvas-based tools) need this; plain
+# <img> tags never did. Signed URLs are the access control, so any origin is fine.
+# Cloudflare-cached derivatives keep their old headers until they're refetched.
+ENV IMGPROXY_ALLOW_ORIGIN="*"
+
 # Security. REQUIRE_SIGNATURE is the reason IMGPROXY_KEY/SALT must match what
 # zm/mediary/md sign with — see the imgproxy-signed-url-pattern note.
 ENV IMGPROXY_REQUIRE_SIGNATURE=true \
